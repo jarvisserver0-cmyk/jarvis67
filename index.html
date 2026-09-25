@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Jarvis</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  html, body { height: 100%; }
+  body {
+    background: #0a0b0d;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    overscroll-behavior: none;
+  }
+  .mono { font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace; }
+
+  /* scrollbar */
+  #history::-webkit-scrollbar { width: 6px; }
+  #history::-webkit-scrollbar-thumb { background: #262a30; border-radius: 3px; }
+
+  /* mic button */
+  #micBtn {
+    position: relative;
+    width: 88px; height: 88px;
+    border-radius: 9999px;
+    background: #14161a;
+    border: 1px solid #24272d;
+    transition: transform .15s ease, background .2s ease, border-color .2s ease;
+  }
+  #micBtn:active { transform: scale(0.96); }
+  #micBtn.listening {
+    background: #1a1008;
+    border-color: #7a4a1e;
+  }
+  #micBtn.speaking {
+    background: #0c1a16;
+    border-color: #1e6e52;
+  }
+  .ring {
+    position: absolute; inset: -10px;
+    border-radius: 9999px;
+    border: 1px solid transparent;
+    opacity: 0;
+  }
+  #micBtn.listening .ring {
+    border-color: #d68a3f;
+    opacity: 1;
+    animation: pulse 1.6s ease-out infinite;
+  }
+  #micBtn.speaking .ring {
+    border-color: #2fae82;
+    opacity: 1;
+    animation: pulse 1.6s ease-out infinite;
+  }
+  @keyframes pulse {
+    0%   { transform: scale(1);   opacity: .55; }
+    100% { transform: scale(1.55); opacity: 0; }
+  }
+
+  .status-dot { width: 7px; height: 7px; border-radius: 9999px; }
+  .dot-online   { background: #2fae82; box-shadow: 0 0 6px #2fae8288; }
+  .dot-offline  { background: #c25b4a; }
+  .dot-checking { background: #d68a3f; }
+
+  .bubble-user {
+    background: #16181c;
+    border: 1px solid #24272d;
+  }
+  .bubble-jarvis {
+    background: #0d1512;
+    border: 1px solid #17251f;
+  }
+
+  /* Markdown-Rendering innerhalb der Jarvis-Bubbles */
+  .md > *:first-child { margin-top: 0; }
+  .md > *:last-child { margin-bottom: 0; }
+  .md p { margin: 0 0 0.6em; }
+  .md strong { color: #eef3f0; font-weight: 600; }
+  .md em { color: #c9d3ce; }
+  .md h1, .md h2, .md h3 {
+    color: #eef3f0;
+    font-weight: 600;
+    margin: 0.8em 0 0.4em;
+    line-height: 1.3;
+  }
+  .md h1 { font-size: 1.15em; }
+  .md h2 { font-size: 1.08em; }
+  .md h3 { font-size: 1.02em; }
+  .md ul, .md ol { margin: 0 0 0.6em; padding-left: 1.3em; }
+  .md ul { list-style: disc; }
+  .md ol { list-style: decimal; }
+  .md li { margin: 0.15em 0; }
+  .md li::marker { color: #4f8a70; }
+  .md a { color: #6fb894; text-decoration: underline; text-underline-offset: 2px; }
+  .md code {
+    background: #131a17;
+    border: 1px solid #1e2b25;
+    border-radius: 4px;
+    padding: 0.1em 0.35em;
+    font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+    font-size: 0.9em;
+  }
+  .md pre {
+    background: #0a100d;
+    border: 1px solid #1e2b25;
+    border-radius: 8px;
+    padding: 0.7em 0.9em;
+    overflow-x: auto;
+    margin: 0.5em 0;
+  }
+  .md pre code { background: none; border: none; padding: 0; }
+  .md blockquote {
+    border-left: 2px solid #244036;
+    margin: 0.5em 0;
+    padding: 0.1em 0 0.1em 0.8em;
+    color: #a9b3ae;
+  }
+  .md hr { border: none; border-top: 1px solid #1c2620; margin: 0.7em 0; }
+
+  textarea::placeholder, input::placeholder { color: #4b5058; }
+
+  .fade-in { animation: fadeIn .25s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+  dialog#settingsDlg {
+    background: #101216;
+    color: #e6e6e6;
+    border: 1px solid #24272d;
+    border-radius: 14px;
+  }
+  dialog::backdrop { background: rgba(0,0,0,0.6); }
+</style>
+</head>
+<body class="text-[#e6e6e6] flex flex-col h-screen">
+
+  <!-- Top bar -->
+  <header class="flex items-center justify-between px-4 pt-4 pb-3 shrink-0" style="padding-top: max(1rem, env(safe-area-inset-top));">
+    <div class="flex items-center gap-2">
+      <span class="mono text-[13px] tracking-wide text-[#6b7078]">JARVIS</span>
+      <span id="statusDot" class="status-dot dot-checking"></span>
+      <span id="statusText" class="text-[12px] text-[#6b7078] mono">prüfe …</span>
+    </div>
+    <button id="settingsBtn" aria-label="Einstellungen" class="w-9 h-9 flex items-center justify-center rounded-full hover:bg-[#16181c] text-[#6b7078]">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+  </header>
+
+  <!-- Chat history -->
+  <main id="history" class="flex-1 overflow-y-auto px-4 space-y-3 pb-2"></main>
+
+  <!-- Mic dock -->
+  <div class="flex flex-col items-center justify-center gap-2 py-3 shrink-0">
+    <button id="micBtn" aria-label="Sprechen">
+      <span class="ring"></span>
+      <svg id="micIcon" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#d6d8db" stroke-width="1.6" class="absolute inset-0 m-auto">
+        <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Z"/>
+        <path d="M19 11a7 7 0 0 1-14 0"/>
+        <path d="M12 18v3"/>
+      </svg>
+      <svg id="stopIcon" width="24" height="24" viewBox="0 0 24 24" fill="#e0a458" class="absolute inset-0 m-auto hidden">
+        <rect x="6" y="6" width="12" height="12" rx="2"/>
+      </svg>
+    </button>
+    <span id="micLabel" class="text-[12px] text-[#6b7078] mono h-4">antippen zum Sprechen</span>
+  </div>
+
+  <!-- Text input -->
+  <form id="textForm" class="flex items-end gap-2 px-4 shrink-0" style="padding-bottom: max(1rem, env(safe-area-inset-bottom));">
+    <textarea id="textInput" rows="1" placeholder="Nachricht an Jarvis …"
+      class="flex-1 resize-none bg-[#111318] border border-[#24272d] rounded-2xl px-4 py-3 text-[15px] leading-snug focus:outline-none focus:border-[#3a3f47] max-h-32"></textarea>
+    <button type="submit" aria-label="Senden"
+      class="w-11 h-11 shrink-0 rounded-full bg-[#1c2027] border border-[#2a2e35] flex items-center justify-center hover:bg-[#22262d] disabled:opacity-40">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#e6e6e6" stroke-width="1.8"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7Z"/></svg>
+    </button>
+  </form>
+
+  <!-- Settings dialog -->
+  <dialog id="settingsDlg" class="w-[90%] max-w-sm p-5">
+    <h2 class="text-[15px] mb-4 text-[#c7cad0]">Einstellungen</h2>
+    <label class="block text-[12px] mono text-[#6b7078] mb-1">Gateway-URL</label>
+    <input id="gatewayUrl" type="text" placeholder="http://100.103.45.23:8000"
+      class="w-full bg-[#0a0b0d] border border-[#24272d] rounded-lg px-3 py-2 text-[14px] mono mb-4 focus:outline-none focus:border-[#3a3f47]">
+    <label class="flex items-center gap-2 mb-5 text-[13px] text-[#c7cad0]">
+      <input id="autoSpeak" type="checkbox" class="accent-[#2fae82]" checked>
+      Antworten automatisch vorlesen
+    </label>
+    <div class="flex justify-end gap-2">
+      <button id="closeSettings" class="px-4 py-2 rounded-lg text-[13px] text-[#9a9ea5] hover:bg-[#16181c]">Schließen</button>
+      <button id="saveSettings" class="px-4 py-2 rounded-lg text-[13px] bg-[#1c2027] border border-[#2a2e35] hover:bg-[#22262d]">Speichern</button>
+    </div>
+  </dialog>
+
+<script>
+(function () {
+  "use strict";
+
+  const DEFAULT_URL = "http://100.103.45.23:8000";
+  const state = {
+    gatewayUrl: localStorage.getItem("jarvis_url") || DEFAULT_URL,
+    autoSpeak: localStorage.getItem("jarvis_autospeak") !== "false",
+    listening: false,
+    speaking: false,
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const history = $("history");
+  const micBtn = $("micBtn");
+  const micIcon = $("micIcon");
+  const stopIcon = $("stopIcon");
+  const micLabel = $("micLabel");
+  const statusDot = $("statusDot");
+  const statusText = $("statusText");
+  const textForm = $("textForm");
+  const textInput = $("textInput");
+  const settingsDlg = $("settingsDlg");
+
+  // ---------- Markdown rendering (Chat-Anzeige) ----------
+  if (window.marked) {
+    marked.setOptions({ breaks: true, gfm: true });
+  }
+
+  // Sehr simples HTML-Escaping als Fallback, falls marked.js aus irgendeinem
+  // Grund nicht geladen werden konnte (z. B. kein Internetzugriff auf den CDN).
+  function escapeHtml(str) {
+    return str
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  function renderMarkdown(text) {
+    if (window.marked) {
+      try {
+        return marked.parse(text);
+      } catch (e) {
+        /* fällt durch auf Fallback */
+      }
+    }
+    return "<p>" + escapeHtml(text).replace(/\n/g, "<br>") + "</p>";
+  }
+
+  // ---------- Chat rendering ----------
+  function addBubble(role, text) {
+    const wrap = document.createElement("div");
+    wrap.className = "fade-in flex " + (role === "user" ? "justify-end" : "justify-start");
+    const bubble = document.createElement("div");
+    bubble.className = (role === "user" ? "bubble-user" : "bubble-jarvis") +
+      " max-w-[85%] rounded-2xl px-4 py-2.5 text-[14.5px] leading-relaxed";
+    if (role === "user") {
+      bubble.classList.add("whitespace-pre-wrap");
+      bubble.textContent = text;
+    } else {
+      bubble.classList.add("md");
+      bubble.innerHTML = renderMarkdown(text);
+    }
+    wrap.appendChild(bubble);
+    history.appendChild(wrap);
+    history.scrollTop = history.scrollHeight;
+    return bubble;
+  }
+
+  function addPending() {
+    const wrap = document.createElement("div");
+    wrap.className = "fade-in flex justify-start";
+    wrap.id = "pendingBubble";
+    const bubble = document.createElement("div");
+    bubble.className = "bubble-jarvis max-w-[85%] rounded-2xl px-4 py-2.5 text-[14.5px] mono text-[#5f8f7c]";
+    bubble.textContent = "· · ·";
+    wrap.appendChild(bubble);
+    history.appendChild(wrap);
+    history.scrollTop = history.scrollHeight;
+  }
+  function removePending() {
+    const p = $("pendingBubble");
+    if (p) p.remove();
+  }
+
+  // ---------- Gateway status ----------
+  async function checkStatus() {
+    statusDot.className = "status-dot dot-checking";
+    statusText.textContent = "prüfe …";
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 4000);
+      const res = await fetch(state.gatewayUrl.replace(/\/$/, "") + "/info", { signal: ctrl.signal });
+      clearTimeout(t);
+      if (res.ok) {
+        statusDot.className = "status-dot dot-online";
+        statusText.textContent = "online";
+      } else {
+        throw new Error("bad status");
+      }
+    } catch (e) {
+      statusDot.className = "status-dot dot-offline";
+      statusText.textContent = "offline";
+    }
+  }
+
+  // ---------- Sending messages ----------
+  async function sendPrompt(prompt) {
+    if (!prompt || !prompt.trim()) return;
+    addBubble("user", prompt.trim());
+    addPending();
+    try {
+      const res = await fetch(state.gatewayUrl.replace(/\/$/, "") + "/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: prompt.trim() }),
+      });
+      removePending();
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+      const answer = (data && data.response) ? data.response : "(keine Antwort erhalten)";
+      addBubble("jarvis", answer);
+      if (state.autoSpeak) speak(answer);
+      checkStatus();
+    } catch (err) {
+      removePending();
+      addBubble("jarvis", "Verbindung zum Gateway fehlgeschlagen: " + err.message);
+      statusDot.className = "status-dot dot-offline";
+      statusText.textContent = "offline";
+    }
+  }
+
+  // ---------- Text form ----------
+  textForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const val = textInput.value;
+    textInput.value = "";
+    textInput.style.height = "auto";
+    sendPrompt(val);
+  });
+  textInput.addEventListener("input", () => {
+    textInput.style.height = "auto";
+    textInput.style.height = Math.min(textInput.scrollHeight, 128) + "px";
+  });
+  textInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      textForm.requestSubmit();
+    }
+  });
+
+  // ---------- Speech recognition ----------
+  const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let recognizer = null;
+  let recognizing = false;
+
+  function setMicVisual(mode) {
+    micBtn.classList.remove("listening", "speaking");
+    micIcon.classList.remove("hidden");
+    stopIcon.classList.add("hidden");
+    if (mode === "listening") {
+      micBtn.classList.add("listening");
+      micLabel.textContent = "höre zu …";
+    } else if (mode === "speaking") {
+      micBtn.classList.add("speaking");
+      micIcon.classList.add("hidden");
+      stopIcon.classList.remove("hidden");
+      micLabel.textContent = "Jarvis spricht — antippen zum Stoppen";
+    } else {
+      micLabel.textContent = "antippen zum Sprechen";
+    }
+  }
+
+  if (SpeechRecognitionImpl) {
+    recognizer = new SpeechRecognitionImpl();
+    recognizer.lang = "de-DE";
+    recognizer.continuous = false;
+    recognizer.interimResults = true;
+
+    let finalTranscript = "";
+
+    recognizer.onstart = () => {
+      recognizing = true;
+      finalTranscript = "";
+      setMicVisual("listening");
+    };
+
+    recognizer.onresult = (event) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const t = event.results[i][0].transcript;
+        if (event.results[i].isFinal) finalTranscript += t;
+        else interim += t;
+      }
+      micLabel.textContent = (finalTranscript + interim).slice(0, 60) || "höre zu …";
+    };
+
+    recognizer.onerror = (event) => {
+      recognizing = false;
+      setMicVisual("idle");
+      if (event.error !== "no-speech" && event.error !== "aborted") {
+        addBubble("jarvis", "Spracherkennung-Fehler: " + event.error);
+      }
+    };
+
+    recognizer.onend = () => {
+      recognizing = false;
+      setMicVisual("idle");
+      if (finalTranscript.trim()) sendPrompt(finalTranscript);
+    };
+  } else {
+    micLabel.textContent = "Spracherkennung nicht verfügbar";
+    micBtn.disabled = true;
+    micBtn.classList.add("opacity-40");
+  }
+
+  // ---------- Speech synthesis ----------
+  const synth = window.speechSynthesis;
+  let germanVoice = null;
+
+  // Entfernt Markdown-Syntax aus einem Antworttext, damit die Sprachausgabe
+  // reinen Fließtext vorliest (keine "Sternchen", "Raute" o.ä.).
+  function cleanTextForSpeech(text) {
+    let t = text;
+
+    // Code-Blöcke (```...```) komplett entfernen, Inhalt geht für die Sprache
+    // ohnehin meist verloren (z. B. Codezeilen) – Hinweis bleibt lesbar.
+    t = t.replace(/```[\s\S]*?```/g, " Codeblock. ");
+    // Inline-Code-Backticks entfernen, Inhalt behalten
+    t = t.replace(/`([^`]+)`/g, "$1");
+
+    // Bilder ![alt](url) -> alt-Text
+    t = t.replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1");
+    // Links [text](url) -> nur Text
+    t = t.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+    // rohe URLs entfernen
+    t = t.replace(/https?:\/\/\S+/g, "");
+
+    // Überschriften-Rauten am Zeilenanfang entfernen
+    t = t.replace(/^#{1,6}\s+/gm, "");
+
+    // Fett/kursiv-Markierungen (**, __, *, _) entfernen
+    t = t.replace(/\*\*\*(.+?)\*\*\*/g, "$1");
+    t = t.replace(/\*\*(.+?)\*\*/g, "$1");
+    t = t.replace(/___(.+?)___/g, "$1");
+    t = t.replace(/__(.+?)__/g, "$1");
+    t = t.replace(/\*(.+?)\*/g, "$1");
+    t = t.replace(/_(.+?)_/g, "$1");
+    t = t.replace(/[*_#`]/g, "");
+
+    // Blockquote-Zeichen entfernen
+    t = t.replace(/^>\s?/gm, "");
+    // Horizontale Trenner entfernen
+    t = t.replace(/^\s*[-*_]{3,}\s*$/gm, "");
+
+    // Aufzählungspunkte (-, *, +) durch natürliche Sprechpause ersetzen
+    t = t.replace(/^\s*[-*+]\s+/gm, ", ");
+    // Nummerierte Listen ("1. ", "2) ") durch Sprechpause ersetzen
+    t = t.replace(/^\s*\d+[.)]\s+/gm, ", ");
+
+    // Mehrfache Leerzeichen/Zeilenumbrüche glätten
+    t = t.replace(/[ \t]+/g, " ");
+    t = t.replace(/\n{2,}/g, ". ");
+    t = t.replace(/\n/g, ", ");
+    t = t.replace(/\s*,\s*,/g, ",");
+    t = t.replace(/,\s*\./g, ".");
+    t = t.trim();
+
+    return t;
+  }
+
+  function pickVoice() {
+    const voices = synth.getVoices();
+    germanVoice =
+      voices.find((v) => v.lang === "de-DE" && /male|männlich/i.test(v.name)) ||
+      voices.find((v) => v.lang === "de-DE") ||
+      voices.find((v) => v.lang && v.lang.startsWith("de")) ||
+      null;
+  }
+  if (synth) {
+    pickVoice();
+    synth.onvoiceschanged = pickVoice;
+  }
+
+  function speak(text) {
+    if (!synth) return;
+    synth.cancel();
+    const spokenText = cleanTextForSpeech(text);
+    if (!spokenText) return;
+    const utter = new SpeechSynthesisUtterance(spokenText);
+    utter.lang = "de-DE";
+    if (germanVoice) utter.voice = germanVoice;
+    utter.rate = 1;
+    utter.onstart = () => { state.speaking = true; setMicVisual("speaking"); };
+    utter.onend = () => { state.speaking = false; setMicVisual("idle"); };
+    utter.onerror = () => { state.speaking = false; setMicVisual("idle"); };
+    synth.speak(utter);
+  }
+
+  function stopSpeaking() {
+    if (synth) synth.cancel();
+    state.speaking = false;
+    setMicVisual("idle");
+  }
+
+  // ---------- Mic button behaviour ----------
+  micBtn.addEventListener("click", () => {
+    if (state.speaking) { stopSpeaking(); return; }
+    if (!recognizer) return;
+    if (recognizing) { recognizer.stop(); return; }
+    try { recognizer.start(); } catch (e) { /* already started */ }
+  });
+
+  // ---------- Settings ----------
+  $("settingsBtn").addEventListener("click", () => {
+    $("gatewayUrl").value = state.gatewayUrl;
+    $("autoSpeak").checked = state.autoSpeak;
+    settingsDlg.showModal();
+  });
+  $("closeSettings").addEventListener("click", () => settingsDlg.close());
+  $("saveSettings").addEventListener("click", () => {
+    const url = $("gatewayUrl").value.trim() || DEFAULT_URL;
+    state.gatewayUrl = url;
+    state.autoSpeak = $("autoSpeak").checked;
+    localStorage.setItem("jarvis_url", url);
+    localStorage.setItem("jarvis_autospeak", String(state.autoSpeak));
+    settingsDlg.close();
+    checkStatus();
+  });
+
+  // ---------- Init ----------
+  checkStatus();
+  setInterval(checkStatus, 30000);
+  addBubble("jarvis", "Jarvis ist bereit. Sprich oder schreibe eine Nachricht.");
+})();
+</script>
+</body>
+</html>
